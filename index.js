@@ -52,19 +52,17 @@ async function updateSellerData(telegramId, updateFields) {
   const existing = await getSeller(numericId);
 
   if (!existing || !existing.telegram_id) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('sellers')
       .insert([{ telegram_id: numericId, ...updateFields }])
       .select();
-    if (error) console.error('Supabase Insert Error:', error);
     return data;
   } else {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('sellers')
       .update(updateFields)
       .eq('telegram_id', numericId)
       .select();
-    if (error) console.error('Supabase Update Error:', error);
     return data;
   }
 }
@@ -89,6 +87,20 @@ bot.start(async (ctx) => {
   delete userStates[ctx.from.id];
   await updateSellerData(ctx.from.id, {});
   ctx.reply('Вітаємо в конструкторі магазинів! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
+});
+
+bot.hears('🚀 Створити магазин', async (ctx) => {
+  delete userStates[ctx.from.id];
+  const webAppUrl = `https://tripstore1-trip-web.vercel.app/?seller_id=${ctx.from.id}`;
+
+  await ctx.reply('🛍️ **Ваш персональний магазин готовий!**\n\nНатисніть кнопку нижче, щоб відкрити його:', {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🌐 Відкрити свій сайт', web_app: { url: webAppUrl } }]
+      ]
+    }
+  });
 });
 
 bot.hears('⚙️ Налаштування сайту', (ctx) => {
@@ -204,4 +216,4 @@ bot.on('message', async (ctx) => {
 });
 
 bot.launch();
-console.log('Бот кастомізації успішно запущено!');
+console.log('Бот успішно запущено!');
