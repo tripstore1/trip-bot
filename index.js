@@ -42,16 +42,24 @@ const colorPaletteMenu = Markup.inlineKeyboard([
 ]);
 
 async function getOrCreateSeller(telegramId) {
+  const tid = String(telegramId);
   try {
-    const { data: existing } = await supabase.from('sellers').select('*').eq('telegram_id', telegramId);
-    if (existing && existing.length > 0) return existing[0];
-
-    const { data: created } = await supabase.from('sellers').insert([{ telegram_id: telegramId }]).select();
-    if (created && created.length > 0) return created[0];
+    let { data: seller } = await supabase.from('sellers').select('*').eq('telegram_id', tid).maybeSingle();
+    if (!seller) {
+      const { data: created } = await supabase.from('sellers').insert([{
+        telegram_id: tid,
+        store_name: 'TRIP STORE 🇺🇦',
+        owner_name: 'Адмін',
+        theme_color: '#275700',
+        banner_text: 'Оригінальний одяг та аксесуари'
+      }]).select().single();
+      seller = created;
+    }
+    return seller || {};
   } catch (err) {
-    console.error('Supabase error:', err);
+    console.error('getOrCreateSeller error:', err);
+    return {};
   }
-  return {};
 }
 
 async function renderShowcaseMenu(ctx) {
@@ -86,13 +94,8 @@ bot.hears('⬅️ Назад в головне меню', (ctx) => {
 
 bot.hears('🎨 Налаштування вітрини', async (ctx) => {
   delete userStates[ctx.from.id];
-  try {
-    const menu = await renderShowcaseMenu(ctx);
-    await ctx.reply(menu.text, menu.extra);
-  } catch (err) {
-    console.error(err);
-    ctx.reply('🎨 **Налаштування вітрини**\n\nОберіть параметр для зміни:', showcaseInlineMenu);
-  }
+  const menu = await renderShowcaseMenu(ctx);
+  await ctx.reply(menu.text, menu.extra);
 });
 
 bot.action('set_store_name', (ctx) => {
@@ -138,7 +141,7 @@ bot.action('set_color', async (ctx) => {
 bot.action(/^color_(#.+)$/, async (ctx) => {
   const selectedColor = ctx.match[1];
   delete userStates[ctx.from.id];
-  await supabase.from('sellers').update({ theme_color: selectedColor }).eq('telegram_id', ctx.from.id);
+  await supabase.from('sellers').update({ theme_color: selectedColor }).eq('telegram_id', String(ctx.from.id));
   ctx.answerCbQuery('Колір збережено!');
   ctx.reply(`✅ Акцентний колір успішно змінено на ${selectedColor}`);
   const menu = await renderShowcaseMenu(ctx);
@@ -156,28 +159,28 @@ bot.on('message', async (ctx) => {
   const state = userStates[ctx.from.id];
   if (!state) return;
 
-  const telegramId = ctx.from.id;
+  const tid = String(ctx.from.id);
 
   if (state === 'awaiting_store_name' && ctx.message.text) {
-    await supabase.from('sellers').update({ store_name: ctx.message.text }).eq('telegram_id', telegramId);
-    ctx.reply(`✅ Назву магазину змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
+    await supabase.from('sellers').update({ store_name: ctx.message.text }).eq('telegram_id', tid);
+    await ctx.reply(`✅ Назву магазину змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_owner_name' && ctx.message.text) {
-    await supabase.from('sellers').update({ owner_name: ctx.message.text }).eq('telegram_id', telegramId);
-    ctx.reply(`✅ Ваше ім'я змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
+    await supabase.from('sellers').update({ owner_name: ctx.message.text }).eq('telegram_id', tid);
+    await ctx.reply(`✅ Ваше ім'я змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_banner_text' && ctx.message.text) {
-    await supabase.from('sellers').update({ banner_text: ctx.message.text }).eq('telegram_id', telegramId);
-    ctx.reply(`✅ Текст банера оновлено: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
+    await supabase.from('sellers').update({ banner_text: ctx.message.text }).eq('telegram_id', tid);
+    await ctx.reply(`✅ Текст банера оновлено: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_color_hex' && ctx.message.text) {
     if (/^#[0-9A-F]{6}$/i.test(ctx.message.text.trim())) {
       const hexColor = ctx.message.text.trim().toUpperCase();
-      await supabase.from('sellers').update({ theme_color: hexColor }).eq('telegram_id', telegramId);
-      ctx.reply(`✅ Колір збережено: \`${hexColor}\``, { parse_mode: 'Markdown' });
+      await supabase.from('sellers').update({ theme_color: hexColor }).eq('telegram_id', tid);
+      await ctx.reply(`✅ Колір збережено: \`${hexColor}\``, { parse_mode: 'Markdown' });
     } else {
       return ctx.reply('❌ Некоректний HEX-код. Введіть у форматі `#FF6B00` або оберіть із палітри вище.');
     }
   } else if (state === 'awaiting_banner_photo') {
     let photoUrl = '';
-    if (ctx.message.photo) {
+    if (ctx.message.photo && ctx.message.photo.length > 0) {
       const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
       const link = await ctx.telegram.getFileLink(fileId);
       photoUrl = link.href;
@@ -189,16 +192,16 @@ bot.on('message', async (ctx) => {
     }
 
     if (photoUrl) {
-      await supabase.from('sellers').update({ banner_photo: photoUrl }).eq('telegram_id', telegramId);
-      ctx.reply('✅ Фото банера успішно завантажено та збережено!');
+      await supabase.from('sellers').update({ banner_photo: photoUrl }).eq('telegram_id', tid);
+      await ctx.reply('✅ Фото банера успішно завантажено та збережено!');
     } else {
       return ctx.reply('❌ Надішліть зображення або посилання на фото.');
     }
   }
 
-  delete userStates[telegramId];
+  delete userStates[ctx.from.id];
   const menu = await renderShowcaseMenu(ctx);
-  ctx.reply(menu.text, menu.extra);
+  await ctx.reply(menu.text, menu.extra);
 });
 
 bot.launch();
