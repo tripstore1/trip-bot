@@ -4,23 +4,19 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Сховище станів очікування вводу від користувачів
 const userStates = {};
 
-// Головна клавіатура
 const mainReplyMenu = Markup.keyboard([
   ['🚀 Створити магазин', '⚙️ Налаштування сайту'],
   ['📖 Інструкція', '💳 Підписка та Триал']
 ]).resize();
 
-// Клавіатура налаштувань
 const settingsReplyMenu = Markup.keyboard([
   ['💳 Реквізити магазину', '🎨 Налаштування вітрини'],
   ['🔌 Інтеграції', '💎 Підписка'],
   ['⬅️ Назад в головне меню']
 ]).resize();
 
-// Inline-кнопки кастомізації вітрини
 const showcaseInlineMenu = Markup.inlineKeyboard([
   [Markup.button.callback('🏷️ Назва магазину', 'set_store_name')],
   [Markup.button.callback('👤 Ваше ім\'я', 'set_owner_name')],
@@ -29,7 +25,6 @@ const showcaseInlineMenu = Markup.inlineKeyboard([
   [Markup.button.callback('🖼️ Фото банера', 'set_banner_photo')]
 ]);
 
-// Inline-палітра кольорів
 const colorPaletteMenu = Markup.inlineKeyboard([
   [
     Markup.button.callback('⚪ Білий', 'color_#FFFFFF'),
@@ -46,45 +41,39 @@ const colorPaletteMenu = Markup.inlineKeyboard([
   [Markup.button.callback('⬅️ Назад', 'back_to_showcase')]
 ]);
 
-// Отримання або створення продавця в БД
 async function getOrCreateSeller(telegramId) {
-  let { data: seller } = await supabase.from('sellers').select('*').eq('telegram_id', telegramId).single();
-  if (!seller) {
-    const { data } = await supabase.from('sellers').insert([{
-      telegram_id: telegramId,
-      store_name: 'TRIP STORE 🇺🇦',
-      owner_name: 'Адмін',
-      theme_color: '#275700',
-      banner_text: 'Оригінальний одяг та аксесуари'
-    }]).select().single();
-    seller = data;
+  try {
+    const { data: existing } = await supabase.from('sellers').select('*').eq('telegram_id', telegramId);
+    if (existing && existing.length > 0) return existing[0];
+
+    const { data: created } = await supabase.from('sellers').insert([{ telegram_id: telegramId }]).select();
+    if (created && created.length > 0) return created[0];
+  } catch (err) {
+    console.error('Supabase error:', err);
   }
-  return seller;
+  return {};
 }
 
-// Генерація меню вітрини з актуальними даними з БД
 async function renderShowcaseMenu(ctx) {
   const seller = await getOrCreateSeller(ctx.from.id);
   const text = 
     `🎨 **Налаштування вітрини**\n\n` +
-    `**Назва:** ${seller.store_name || 'Не вказано'}\n` +
-    `**Ім'я власника:** ${seller.owner_name || 'Не вказано'}\n` +
+    `**Назва:** ${seller.store_name || 'TRIP STORE 🇺🇦'}\n` +
+    `**Ім'я власника:** ${seller.owner_name || 'Адмін'}\n` +
     `**Акцентний колір:** \`${seller.theme_color || '#275700'}\`\n` +
-    `**Текст банера:** ${seller.banner_text || 'За замовчуванням'}\n` +
+    `**Текст банера:** ${seller.banner_text || 'Оригінальний одяг та аксесуари'}\n` +
     `**Фото банера:** ${seller.banner_photo ? '✅ встановлено' : '❌ не встановлено'}\n\n` +
     `Зміни одразу видно покупцям у вітрині.`;
 
   return { text, extra: { parse_mode: 'Markdown', ...showcaseInlineMenu } };
 }
 
-// Старт
 bot.start(async (ctx) => {
   delete userStates[ctx.from.id];
   await getOrCreateSeller(ctx.from.id);
   ctx.reply('Вітаємо в конструкторі магазинів! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
 });
 
-// Навігація Reply-меню
 bot.hears('⚙️ Налаштування сайту', (ctx) => {
   delete userStates[ctx.from.id];
   ctx.reply('⚙️ **Налаштування сайту**\n\nОберіть розділ:', { parse_mode: 'Markdown', ...settingsReplyMenu });
@@ -97,11 +86,15 @@ bot.hears('⬅️ Назад в головне меню', (ctx) => {
 
 bot.hears('🎨 Налаштування вітрини', async (ctx) => {
   delete userStates[ctx.from.id];
-  const menu = await renderShowcaseMenu(ctx);
-  ctx.reply(menu.text, menu.extra);
+  try {
+    const menu = await renderShowcaseMenu(ctx);
+    await ctx.reply(menu.text, menu.extra);
+  } catch (err) {
+    console.error(err);
+    ctx.reply('🎨 **Налаштування вітрини**\n\nОберіть параметр для зміни:', showcaseInlineMenu);
+  }
 });
 
-// Обробники натискань Inline-кнопки кастомізації
 bot.action('set_store_name', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_store_name';
   ctx.answerCbQuery();
@@ -142,7 +135,6 @@ bot.action('set_color', async (ctx) => {
   userStates[ctx.from.id] = 'awaiting_color_hex';
 });
 
-// Вибір кольору з палітри
 bot.action(/^color_(#.+)$/, async (ctx) => {
   const selectedColor = ctx.match[1];
   delete userStates[ctx.from.id];
@@ -160,7 +152,6 @@ bot.action('back_to_showcase', async (ctx) => {
   ctx.reply(menu.text, menu.extra);
 });
 
-// Обробка введеного тексту та фото від користувача
 bot.on('message', async (ctx) => {
   const state = userStates[ctx.from.id];
   if (!state) return;
