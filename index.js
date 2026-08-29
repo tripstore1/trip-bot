@@ -47,7 +47,7 @@ async function updateSellerData(telegramId, updateFields) {
     .from('sellers')
     .upsert({ telegram_id: tid, ...updateFields }, { onConflict: 'telegram_id' })
     .select();
-  
+
   if (error) {
     console.error('Помилка оновлення Supabase:', error.message);
   }
@@ -171,22 +171,27 @@ bot.on('message', async (ctx) => {
     }
   } else if (state === 'awaiting_banner_photo') {
     let photoUrl = '';
-    if (ctx.message.photo && ctx.message.photo.length > 0) {
-      const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-      const link = await ctx.telegram.getFileLink(fileId);
-      photoUrl = link.href;
-    } else if (ctx.message.document) {
-      const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
-      photoUrl = link.href;
-    } else if (ctx.message.text && ctx.message.text.startsWith('http')) {
-      photoUrl = ctx.message.text.trim();
-    }
+    try {
+      if (ctx.message.photo && ctx.message.photo.length > 0) {
+        const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+        const link = await ctx.telegram.getFileLink(fileId);
+        photoUrl = typeof link === 'string' ? link : link.href;
+      } else if (ctx.message.document) {
+        const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
+        photoUrl = typeof link === 'string' ? link : link.href;
+      } else if (ctx.message.text && ctx.message.text.startsWith('http')) {
+        photoUrl = ctx.message.text.trim();
+      }
 
-    if (photoUrl) {
-      await updateSellerData(ctx.from.id, { banner_photo: photoUrl });
-      await ctx.reply('✅ Фото банера успішно завантажено!');
-    } else {
-      return ctx.reply('❌ Надішліть фотографію.');
+      if (photoUrl) {
+        await updateSellerData(ctx.from.id, { banner_photo: String(photoUrl) });
+        await ctx.reply('✅ Фото банера успішно завантажено!');
+      } else {
+        return ctx.reply('❌ Надішліть фотографію.');
+      }
+    } catch (e) {
+      console.error('Photo error:', e);
+      return ctx.reply('❌ Помилка під час обробки файлу.');
     }
   }
 
