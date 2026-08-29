@@ -43,51 +43,43 @@ const colorPaletteMenu = Markup.inlineKeyboard([
 
 async function getSeller(telegramId) {
   const numericId = Number(telegramId);
-  const { data, error } = await supabase
-    .from('sellers')
-    .select('*')
-    .eq('telegram_id', numericId)
-    .maybeSingle();
-
-  if (error) console.error('Помилка отримання sellers:', error.message);
-  return data;
+  const { data } = await supabase.from('sellers').select('*').eq('telegram_id', numericId).maybeSingle();
+  return data || {};
 }
 
 async function updateSellerData(telegramId, updateFields) {
   const numericId = Number(telegramId);
-  
-  // Перевіряємо, чи існує запис
   const existing = await getSeller(numericId);
 
-  if (!existing) {
-    // Якщо немає — створюємо новий рядок
+  if (!existing || !existing.telegram_id) {
     const { data, error } = await supabase
       .from('sellers')
       .insert([{ telegram_id: numericId, ...updateFields }])
       .select();
-    if (error) console.error('Помилка створення sellers:', error.message);
+    if (error) console.error('Supabase Insert Error:', error);
     return data;
   } else {
-    // Якщо є — оновлюємо
     const { data, error } = await supabase
       .from('sellers')
       .update(updateFields)
       .eq('telegram_id', numericId)
       .select();
-    if (error) console.error('Помилка оновлення sellers:', error.message);
+    if (error) console.error('Supabase Update Error:', error);
     return data;
   }
 }
 
 async function renderShowcaseMenu(ctx) {
-  const seller = (await getSeller(ctx.from.id)) || {};
+  const seller = await getSeller(ctx.from.id);
+  const hasPhoto = Boolean(seller.banner_photo && seller.banner_photo.trim() !== '');
+  
   const text = 
     `🎨 **Налаштування вітрини**\n\n` +
     `**Назва:** ${seller.store_name || 'TRIP STORE 🇺🇦'}\n` +
     `**Ім'я власника:** ${seller.owner_name || 'Адмін'}\n` +
     `**Акцентний колір:** \`${seller.theme_color || '#275700'}\`\n` +
     `**Текст банера:** ${seller.banner_text || 'Оригінальний одяг та аксесуари'}\n` +
-    `**Фото банера:** ${seller.banner_photo ? '✅ встановлено' : '❌ не встановлено'}\n\n` +
+    `**Фото банера:** ${hasPhoto ? '✅ встановлено' : '❌ не встановлено'}\n\n` +
     `Зміни одразу видно покупцям у вітрині.`;
 
   return { text, extra: { parse_mode: 'Markdown', ...showcaseInlineMenu } };
@@ -136,12 +128,12 @@ bot.action('set_banner_text', (ctx) => {
 bot.action('set_banner_photo', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_banner_photo';
   ctx.answerCbQuery();
-  ctx.reply('🖼️ **Фото банера**\n\nНадішліть фото зображенням або файлом:');
+  ctx.reply('🖼️ **Фото банера**\n\nНадішліть фото або пряме посилання на нього:');
 });
 
 bot.action('set_color', async (ctx) => {
   delete userStates[ctx.from.id];
-  const seller = (await getSeller(ctx.from.id)) || {};
+  const seller = await getSeller(ctx.from.id);
   ctx.answerCbQuery();
   ctx.reply(
     `🎨 **Акцентний колір**\n\nПоточний: \`${seller.theme_color || '#275700'}\`\n\nОберіть колір або надішліть HEX-код:`,
@@ -190,27 +182,19 @@ bot.on('message', async (ctx) => {
     }
   } else if (state === 'awaiting_banner_photo') {
     let photoUrl = '';
-    try {
-      if (ctx.message.photo && ctx.message.photo.length > 0) {
-        const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-        const link = await ctx.telegram.getFileLink(fileId);
-        photoUrl = typeof link === 'string' ? link : link.href;
-      } else if (ctx.message.document) {
-        const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
-        photoUrl = typeof link === 'string' ? link : link.href;
-      } else if (ctx.message.text && ctx.message.text.startsWith('http')) {
-        photoUrl = ctx.message.text.trim();
-      }
+    if (ctx.message.photo && ctx.message.photo.length > 0) {
+      const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+      const fileLinkObj = await ctx.telegram.getFileLink(fileId);
+      photoUrl = String(fileLinkObj.href || fileLinkObj);
+    } else if (ctx.message.text && ctx.message.text.startsWith('http')) {
+      photoUrl = ctx.message.text.trim();
+    }
 
-      if (photoUrl) {
-        await updateSellerData(ctx.from.id, { banner_photo: String(photoUrl) });
-        await ctx.reply('✅ Фото банера успішно завантажено!');
-      } else {
-        return ctx.reply('❌ Надішліть фотографію.');
-      }
-    } catch (e) {
-      console.error('Photo error:', e);
-      return ctx.reply('❌ Помилка під час обробки файлу.');
+    if (photoUrl) {
+      await updateSellerData(ctx.from.id, { banner_photo: photoUrl });
+      await ctx.reply('✅ Фото банера успішно завантажено!');
+    } else {
+      return ctx.reply('❌ Надішліть фотографію.');
     }
   }
 
