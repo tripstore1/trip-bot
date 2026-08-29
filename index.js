@@ -4,23 +4,18 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Головне меню (Inline)
-const mainMenu = Markup.inlineKeyboard([
-  [Markup.button.callback('🚀 Створити магазин', 'create_store')],
-  [Markup.button.callback('⚙️ Налаштування сайту', 'settings')],
-  [Markup.button.callback('📖 Інструкція', 'instructions')],
-  [Markup.button.callback('💳 Підписка та Триал', 'subscription')]
-]);
-
-// Меню налаштувань у стилі Reply-клавіатури (у 2 стовпчики)
-const replySettingsMenu = Markup.keyboard([
-  ['💳 Реквізити магазину', '🎨 Налаштування вітрини'],
-  ['⚙️ Інтеграції', '💳 Підписка'],
-  ['⬅️ Назад']
+// Головне меню (нижня клавіатура)
+const mainReplyMenu = Markup.keyboard([
+  ['🚀 Створити магазин', '⚙️ Налаштування сайту'],
+  ['📖 Інструкція', '💳 Підписка та Триал']
 ]).resize();
 
-// Скидання Reply-клавіатури
-const removeKeyboard = Markup.removeKeyboard();
+// Меню налаштувань (нижня клавіатура)
+const settingsReplyMenu = Markup.keyboard([
+  ['💳 Реквізити магазину', '🎨 Налаштування вітрини'],
+  ['🔌 Інтеграції', '💎 Підписка'],
+  ['⬅️ Назад в головне меню']
+]).resize();
 
 // Обробка /start
 bot.start(async (ctx) => {
@@ -33,18 +28,38 @@ bot.start(async (ctx) => {
   }
 
   ctx.reply(
-    'Вітаємо в конструкторі магазинів! 🛍️\n\nТут ти можеш підключити свій Telegram-бот та отримати готовий Mini App магазин.',
-    mainMenu
+    'Вітаємо в конструкторі магазинів! 🛍️\n\nОберіть потрібний розділ у меню нижче:',
+    mainReplyMenu
   );
 });
 
-// При натисканні на "⚙️ Налаштування сайту" надсилаємо текстове повідомлення і відкриваємо нижню клавіатуру
-bot.action('settings', (ctx) => {
-  ctx.answerCbQuery();
-  ctx.reply('⚙️ Налаштування', replySettingsMenu);
+// Кнопка "⚙️ Налаштування сайту"
+bot.hears('⚙️ Налаштування сайту', (ctx) => {
+  ctx.reply('⚙️ **Налаштування сайту**\n\nОберіть розділ для налаштування:', {
+    parse_mode: 'Markdown',
+    ...settingsReplyMenu
+  });
 });
 
-// Обробка текстових кнопок з нижньої клавіатури
+// Кнопка "⬅️ Назад в головне меню"
+bot.hears('⬅️ Назад в головне меню', (ctx) => {
+  ctx.reply('Повертаємось у головне меню ↩️', mainReplyMenu);
+});
+
+// Головне меню - інші кнопки
+bot.hears('🚀 Створити магазин', (ctx) => {
+  ctx.reply('🚀 Розділ створення магазину у розробці...');
+});
+
+bot.hears('📖 Інструкція', (ctx) => {
+  ctx.reply('📖 Розділ інструкцій у розробці...');
+});
+
+bot.hears('💳 Підписка та Триал', (ctx) => {
+  ctx.reply('💳 Розділ підписки у розробці...');
+});
+
+// Меню налаштувань - підрозділи
 bot.hears('💳 Реквізити магазину', (ctx) => {
   ctx.reply('💳 Розділ реквізитів у розробці...');
 });
@@ -53,23 +68,13 @@ bot.hears('🎨 Налаштування вітрини', (ctx) => {
   ctx.reply('🎨 Розділ кастомізації вітрини у розробці...');
 });
 
-bot.hears('⚙️ Інтеграції', (ctx) => {
+bot.hears('🔌 Інтеграції', (ctx) => {
   ctx.reply('🔌 Розділ інтеграцій у розробці...');
 });
 
-bot.hears('💳 Підписка', (ctx) => {
+bot.hears('💎 Підписка', (ctx) => {
   ctx.reply('💎 Розділ підписки у розробці...');
 });
 
-// Кнопка "⬅️ Назад" ховає нижню клавіатуру та виводить головне меню
-bot.hears('⬅️ Назад', (ctx) => {
-  ctx.reply('Повертаємось у головне меню...', removeKeyboard).then(() => {
-    ctx.reply(
-      'Вітаємо в конструкторі магазинів! 🛍️\n\nТут ти можеш підключити свій Telegram-бот та отримати готовий Mini App магазин.',
-      mainMenu
-    );
-  });
-});
-
 bot.launch();
-console.log('Бот успішно запущено!');
+console.log('Бот успішно запущено з Reply-меню!');
