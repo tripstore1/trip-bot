@@ -41,27 +41,46 @@ const colorPaletteMenu = Markup.inlineKeyboard([
   [Markup.button.callback('⬅️ Назад', 'back_to_showcase')]
 ]);
 
-async function updateSellerData(telegramId, updateFields) {
-  const tid = String(telegramId);
+async function getSeller(telegramId) {
+  const numericId = Number(telegramId);
   const { data, error } = await supabase
     .from('sellers')
-    .upsert({ telegram_id: tid, ...updateFields }, { onConflict: 'telegram_id' })
-    .select();
+    .select('*')
+    .eq('telegram_id', numericId)
+    .maybeSingle();
 
-  if (error) {
-    console.error('Помилка оновлення Supabase:', error.message);
-  }
+  if (error) console.error('Помилка отримання sellers:', error.message);
   return data;
 }
 
-async function getSeller(telegramId) {
-  const tid = String(telegramId);
-  const { data } = await supabase.from('sellers').select('*').eq('telegram_id', tid).maybeSingle();
-  return data || {};
+async function updateSellerData(telegramId, updateFields) {
+  const numericId = Number(telegramId);
+  
+  // Перевіряємо, чи існує запис
+  const existing = await getSeller(numericId);
+
+  if (!existing) {
+    // Якщо немає — створюємо новий рядок
+    const { data, error } = await supabase
+      .from('sellers')
+      .insert([{ telegram_id: numericId, ...updateFields }])
+      .select();
+    if (error) console.error('Помилка створення sellers:', error.message);
+    return data;
+  } else {
+    // Якщо є — оновлюємо
+    const { data, error } = await supabase
+      .from('sellers')
+      .update(updateFields)
+      .eq('telegram_id', numericId)
+      .select();
+    if (error) console.error('Помилка оновлення sellers:', error.message);
+    return data;
+  }
 }
 
 async function renderShowcaseMenu(ctx) {
-  const seller = await getSeller(ctx.from.id);
+  const seller = (await getSeller(ctx.from.id)) || {};
   const text = 
     `🎨 **Налаштування вітрини**\n\n` +
     `**Назва:** ${seller.store_name || 'TRIP STORE 🇺🇦'}\n` +
@@ -122,7 +141,7 @@ bot.action('set_banner_photo', (ctx) => {
 
 bot.action('set_color', async (ctx) => {
   delete userStates[ctx.from.id];
-  const seller = await getSeller(ctx.from.id);
+  const seller = (await getSeller(ctx.from.id)) || {};
   ctx.answerCbQuery();
   ctx.reply(
     `🎨 **Акцентний колір**\n\nПоточний: \`${seller.theme_color || '#275700'}\`\n\nОберіть колір або надішліть HEX-код:`,
