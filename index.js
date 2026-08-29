@@ -41,29 +41,27 @@ const colorPaletteMenu = Markup.inlineKeyboard([
   [Markup.button.callback('⬅️ Назад', 'back_to_showcase')]
 ]);
 
-async function getOrCreateSeller(telegramId) {
+async function updateSellerData(telegramId, updateFields) {
   const tid = String(telegramId);
-  try {
-    let { data: seller } = await supabase.from('sellers').select('*').eq('telegram_id', tid).maybeSingle();
-    if (!seller) {
-      const { data: created } = await supabase.from('sellers').insert([{
-        telegram_id: tid,
-        store_name: 'TRIP STORE 🇺🇦',
-        owner_name: 'Адмін',
-        theme_color: '#275700',
-        banner_text: 'Оригінальний одяг та аксесуари'
-      }]).select().single();
-      seller = created;
-    }
-    return seller || {};
-  } catch (err) {
-    console.error('getOrCreateSeller error:', err);
-    return {};
+  const { data, error } = await supabase
+    .from('sellers')
+    .upsert({ telegram_id: tid, ...updateFields }, { onConflict: 'telegram_id' })
+    .select();
+  
+  if (error) {
+    console.error('Помилка оновлення Supabase:', error.message);
   }
+  return data;
+}
+
+async function getSeller(telegramId) {
+  const tid = String(telegramId);
+  const { data } = await supabase.from('sellers').select('*').eq('telegram_id', tid).maybeSingle();
+  return data || {};
 }
 
 async function renderShowcaseMenu(ctx) {
-  const seller = await getOrCreateSeller(ctx.from.id);
+  const seller = await getSeller(ctx.from.id);
   const text = 
     `🎨 **Налаштування вітрини**\n\n` +
     `**Назва:** ${seller.store_name || 'TRIP STORE 🇺🇦'}\n` +
@@ -78,7 +76,7 @@ async function renderShowcaseMenu(ctx) {
 
 bot.start(async (ctx) => {
   delete userStates[ctx.from.id];
-  await getOrCreateSeller(ctx.from.id);
+  await updateSellerData(ctx.from.id, {});
   ctx.reply('Вітаємо в конструкторі магазинів! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
 });
 
@@ -101,38 +99,33 @@ bot.hears('🎨 Налаштування вітрини', async (ctx) => {
 bot.action('set_store_name', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_store_name';
   ctx.answerCbQuery();
-  ctx.reply('🏷️ **Назва магазину**\n\nНадішліть нову назву магазину, яку побачать покупці на вітрині:');
+  ctx.reply('🏷️ **Назва магазину**\n\nНадішліть нову назву магазину:');
 });
 
 bot.action('set_owner_name', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_owner_name';
   ctx.answerCbQuery();
-  ctx.reply('👤 **Ваше ім\'я**\n\nНадішліть нове ім\'я (його бачите ви в кабінеті; покупцям показується назва магазину):');
+  ctx.reply('👤 **Ваше ім\'я**\n\nНадішліть нове ім\'я:');
 });
 
 bot.action('set_banner_text', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_banner_text';
   ctx.answerCbQuery();
-  ctx.reply('✍️ **Текст банера**\n\nНадішліть новий текст (до 100 символів) — він показується під назвою магазину на головній сторінці вітрини:');
+  ctx.reply('✍️ **Текст банера**\n\nНадішліть новий текст (до 100 символів):');
 });
 
 bot.action('set_banner_photo', (ctx) => {
   userStates[ctx.from.id] = 'awaiting_banner_photo';
   ctx.answerCbQuery();
-  ctx.reply(
-    '🖼️ **Фото банера**\n\n' +
-    'Надішліть фото — воно стане фоном головного екрана вітрини.\n\n' +
-    'Рекомендований розмір: 1200×1600, вертикальне.\n' +
-    'Порада: для максимальної якості надішліть банер файлом.'
-  );
+  ctx.reply('🖼️ **Фото банера**\n\nНадішліть фото зображенням або файлом:');
 });
 
 bot.action('set_color', async (ctx) => {
   delete userStates[ctx.from.id];
-  const seller = await getOrCreateSeller(ctx.from.id);
+  const seller = await getSeller(ctx.from.id);
   ctx.answerCbQuery();
   ctx.reply(
-    `🎨 **Акцентний колір**\n\nПоточний: \`${seller.theme_color || '#275700'}\`\n\nОберіть зі списку або надішліть свій HEX-код (наприклад \`#FF6B00\`):`,
+    `🎨 **Акцентний колір**\n\nПоточний: \`${seller.theme_color || '#275700'}\`\n\nОберіть колір або надішліть HEX-код:`,
     { parse_mode: 'Markdown', ...colorPaletteMenu }
   );
   userStates[ctx.from.id] = 'awaiting_color_hex';
@@ -141,9 +134,9 @@ bot.action('set_color', async (ctx) => {
 bot.action(/^color_(#.+)$/, async (ctx) => {
   const selectedColor = ctx.match[1];
   delete userStates[ctx.from.id];
-  await supabase.from('sellers').update({ theme_color: selectedColor }).eq('telegram_id', String(ctx.from.id));
+  await updateSellerData(ctx.from.id, { theme_color: selectedColor });
   ctx.answerCbQuery('Колір збережено!');
-  ctx.reply(`✅ Акцентний колір успішно змінено на ${selectedColor}`);
+  ctx.reply(`✅ Акцентний колір змінено на ${selectedColor}`);
   const menu = await renderShowcaseMenu(ctx);
   ctx.reply(menu.text, menu.extra);
 });
@@ -159,24 +152,22 @@ bot.on('message', async (ctx) => {
   const state = userStates[ctx.from.id];
   if (!state) return;
 
-  const tid = String(ctx.from.id);
-
   if (state === 'awaiting_store_name' && ctx.message.text) {
-    await supabase.from('sellers').update({ store_name: ctx.message.text }).eq('telegram_id', tid);
+    await updateSellerData(ctx.from.id, { store_name: ctx.message.text });
     await ctx.reply(`✅ Назву магазину змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_owner_name' && ctx.message.text) {
-    await supabase.from('sellers').update({ owner_name: ctx.message.text }).eq('telegram_id', tid);
+    await updateSellerData(ctx.from.id, { owner_name: ctx.message.text });
     await ctx.reply(`✅ Ваше ім'я змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_banner_text' && ctx.message.text) {
-    await supabase.from('sellers').update({ banner_text: ctx.message.text }).eq('telegram_id', tid);
+    await updateSellerData(ctx.from.id, { banner_text: ctx.message.text });
     await ctx.reply(`✅ Текст банера оновлено: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
   } else if (state === 'awaiting_color_hex' && ctx.message.text) {
     if (/^#[0-9A-F]{6}$/i.test(ctx.message.text.trim())) {
       const hexColor = ctx.message.text.trim().toUpperCase();
-      await supabase.from('sellers').update({ theme_color: hexColor }).eq('telegram_id', tid);
+      await updateSellerData(ctx.from.id, { theme_color: hexColor });
       await ctx.reply(`✅ Колір збережено: \`${hexColor}\``, { parse_mode: 'Markdown' });
     } else {
-      return ctx.reply('❌ Некоректний HEX-код. Введіть у форматі `#FF6B00` або оберіть із палітри вище.');
+      return ctx.reply('❌ Некоректний HEX-код. Формат: `#FF6B00`.');
     }
   } else if (state === 'awaiting_banner_photo') {
     let photoUrl = '';
@@ -192,10 +183,10 @@ bot.on('message', async (ctx) => {
     }
 
     if (photoUrl) {
-      await supabase.from('sellers').update({ banner_photo: photoUrl }).eq('telegram_id', tid);
-      await ctx.reply('✅ Фото банера успішно завантажено та збережено!');
+      await updateSellerData(ctx.from.id, { banner_photo: photoUrl });
+      await ctx.reply('✅ Фото банера успішно завантажено!');
     } else {
-      return ctx.reply('❌ Надішліть зображення або посилання на фото.');
+      return ctx.reply('❌ Надішліть фотографію.');
     }
   }
 
