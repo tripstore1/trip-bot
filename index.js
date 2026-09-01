@@ -5,10 +5,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const userStates = {};
+const tempProductData = {};
 
+// Головне меню (без кнопки "Створити магазин")
 const mainReplyMenu = Markup.keyboard([
-  ['🚀 Створити магазин', '⚙️ Налаштування сайту'],
-  ['📖 Інструкція', '💳 Підписка та Триал']
+  ['➕ Додати товар', '📦 Мої товари'],
+  ['⚙️ Налаштування сайту', '📖 Інструкція'],
+  ['💳 Підписка та Триал']
 ]).resize();
 
 const settingsReplyMenu = Markup.keyboard([
@@ -85,22 +88,36 @@ async function renderShowcaseMenu(ctx) {
 
 bot.start(async (ctx) => {
   delete userStates[ctx.from.id];
+  delete tempProductData[ctx.from.id];
   await updateSellerData(ctx.from.id, {});
-  ctx.reply('Вітаємо в конструкторі магазинів! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
+  ctx.reply('Вітаємо в панелі управління магазином! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
 });
 
-bot.hears('🚀 Створити магазин', async (ctx) => {
-  delete userStates[ctx.from.id];
-  const webAppUrl = `https://tripstore1-trip-web.vercel.app/?seller_id=${ctx.from.id}`;
+// Додавання товару
+bot.hears('➕ Додати товар', (ctx) => {
+  userStates[ctx.from.id] = 'add_prod_name';
+  tempProductData[ctx.from.id] = {};
+  ctx.reply('📦 **Крок 1 з 4: Назва товару**\n\nВведіть назву товару (наприклад: *Футболка Corteiz*):', { parse_mode: 'Markdown' });
+});
 
-  await ctx.reply('🛍️ **Ваш персональний магазин готовий!**\n\nНатисніть кнопку нижче, щоб відкрити його:', {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🌐 Відкрити свій сайт', web_app: { url: webAppUrl } }]
-      ]
-    }
+// Список товарів
+bot.hears('📦 Мої товари', async (ctx) => {
+  delete userStates[ctx.from.id];
+  const { data: products } = await supabase
+    .from('products')
+    .select('*')
+    .eq('seller_id', Number(ctx.from.id));
+
+  if (!products || products.length === 0) {
+    return ctx.reply('У вас поки немає доданих товарів. Натисніть "➕ Додати товар".');
+  }
+
+  let listText = '📦 **Ваші товари:**\n\n';
+  products.forEach((p, index) => {
+    listText += `${index + 1}. **${p.name}** — ${p.price} грн\n`;
   });
+
+  ctx.reply(listText, { parse_mode: 'Markdown' });
 });
 
 bot.hears('⚙️ Налаштування сайту', (ctx) => {
@@ -171,10 +188,68 @@ bot.action('back_to_showcase', async (ctx) => {
   ctx.reply(menu.text, menu.extra);
 });
 
-bot.on('message', async (ctx) => {
+bot.on(['text', 'photo'], async (ctx) => {
   const state = userStates[ctx.from.id];
   if (!state) return;
 
+  // Кроки додавання товару
+  if (state === 'add_prod_name' && ctx.message.text) {
+    tempProductData[ctx.from.id].name = ctx.message.text;
+    userStates[ctx.from.id] = 'add_prod_price';
+    return ctx.reply('💰 **Крок 2 з 4: Ціна товару**\n\nВведіть ціну в гривнях (тільки число, наприклад: *850*):', { parse_mode: 'Markdown' });
+  }
+
+  if (state === 'add_prod_price' && ctx.message.text) {
+    const price = parseFloat(ctx.message.text.replace(',', '.'));
+    if (isNaN(price)) {
+      return ctx.reply('❌ Будь ласка, введіть числове значення для ціни.');
+    }
+    tempProductData[ctx.from.id].price = price;
+    userStates[ctx.from.id] = 'add_prod_desc';
+    return ctx.reply('📝 **Крок 3 з 4: Опис товару**\n\nВведіть короткий опис або розміри (або напишіть `-` щоб пропустити):');
+  }
+
+  if (state === 'add_prod_desc' && ctx.message.text) {
+    tempProductData[ctx.from.id].description = ctx.message.text === '-' ? '' : ctx.message.text;
+    userStates[ctx.from.id] = 'add_prod_photo';
+    return ctx.reply('🖼️ **Крок 4 з 4: Фото товару**\n\nНадішліть фотографію товару (або пряме посилання):');
+  }
+
+  if (state === 'add_prod_photo') {
+    let photoUrl = '';
+    if (ctx.message.photo && ctx.message.photo.length > 0) {
+      const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+      const fileLinkObj = await ctx.telegram.getFileLink(fileId);
+      photoUrl = String(fileLinkObj.href || fileLinkObj);
+    } else if (ctx.message.text && ctx.message.text.startsWith('http')) {
+      photoUrl = ctx.message.text.trim();
+    }
+
+    if (!photoUrl) {
+      return ctx.reply('❌ Будь ласка, надішліть фотографію.');
+    }
+
+    const prod = tempProductData[ctx.from.id];
+    const { error } = await supabase.from('products').insert([{
+      seller_id: Number(ctx.from.id),
+      name: prod.name,
+      price: prod.price,
+      description: prod.description || '',
+      image_url: photoUrl
+    }]);
+
+    delete userStates[ctx.from.id];
+    delete tempProductData[ctx.from.id];
+
+    if (error) {
+      console.error(error);
+      return ctx.reply('❌ Помилка збереження товару в Supabase.');
+    }
+
+    return ctx.reply(`🎉 **Товар успішно додано!**\n\n📦 **Назва:** ${prod.name}\n💰 **Ціна:** ${prod.price} грн`, { parse_mode: 'Markdown', ...mainReplyMenu });
+  }
+
+  // Обробка налаштувань вітрини
   if (state === 'awaiting_store_name' && ctx.message.text) {
     await updateSellerData(ctx.from.id, { store_name: ctx.message.text });
     await ctx.reply(`✅ Назву магазину змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
