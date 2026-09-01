@@ -7,7 +7,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const userStates = {};
 const tempProductData = {};
 
-// Головне меню (без кнопки "Створити магазин")
+// Головне меню
 const mainReplyMenu = Markup.keyboard([
   ['➕ Додати товар', '📦 Мої товари'],
   ['⚙️ Налаштування сайту', '📖 Інструкція'],
@@ -28,21 +28,30 @@ const showcaseInlineMenu = Markup.inlineKeyboard([
   [Markup.button.callback('🖼️ Фото банера', 'set_banner_photo')]
 ]);
 
-const colorPaletteMenu = Markup.inlineKeyboard([
-  [
-    Markup.button.callback('⚪ Білий', 'color_#FFFFFF'),
-    Markup.button.callback('⚫ Чорний', 'color_#000000')
-  ],
-  [
-    Markup.button.callback('🔵 Синій', 'color_#2F5FD0'),
-    Markup.button.callback('🟢 Зелений', 'color_#275700')
-  ],
-  [
-    Markup.button.callback('🟣 Фіолетовий', 'color_#8A2BE2'),
-    Markup.button.callback('🔴 Червоний', 'color_#FF3B30')
-  ],
-  [Markup.button.callback('⬅️ Назад', 'back_to_showcase')]
-]);
+// Динамічна палітра кольорів з галочкою біля обраного
+function getColorPaletteMenu(currentColor = '#275700') {
+  const colors = [
+    { name: '⚪ Білий', code: '#FFFFFF' },
+    { name: '⚫ Чорний', code: '#000000' },
+    { name: '🔵 Синій', code: '#2F5FD0' },
+    { name: '🟢 Зелений', code: '#275700' },
+    { name: '🟣 Фіолетовий', code: '#8A2BE2' },
+    { name: '🔴 Червоний', code: '#FF3B30' }
+  ];
+
+  const buttons = colors.map(c => {
+    const isSelected = c.code.toUpperCase() === currentColor.toUpperCase();
+    const label = isSelected ? `✅ ${c.name}` : c.name;
+    return Markup.button.callback(label, `color_${c.code}`);
+  });
+
+  return Markup.inlineKeyboard([
+    [buttons[0], buttons[1]],
+    [buttons[2], buttons[3]],
+    [buttons[4], buttons[5]],
+    [Markup.button.callback('⬅️ Назад', 'back_to_showcase')]
+  ]);
+}
 
 async function getSeller(telegramId) {
   const numericId = Number(telegramId);
@@ -93,14 +102,12 @@ bot.start(async (ctx) => {
   ctx.reply('Вітаємо в панелі управління магазином! 🛍️\n\nОберіть потрібний розділ:', mainReplyMenu);
 });
 
-// Додавання товару
 bot.hears('➕ Додати товар', (ctx) => {
   userStates[ctx.from.id] = 'add_prod_name';
   tempProductData[ctx.from.id] = {};
   ctx.reply('📦 **Крок 1 з 4: Назва товару**\n\nВведіть назву товару (наприклад: *Футболка Corteiz*):', { parse_mode: 'Markdown' });
 });
 
-// Список товарів
 bot.hears('📦 Мої товари', async (ctx) => {
   delete userStates[ctx.from.id];
   const { data: products } = await supabase
@@ -163,10 +170,11 @@ bot.action('set_banner_photo', (ctx) => {
 bot.action('set_color', async (ctx) => {
   delete userStates[ctx.from.id];
   const seller = await getSeller(ctx.from.id);
+  const currentColor = seller.theme_color || '#275700';
   ctx.answerCbQuery();
   ctx.reply(
-    `🎨 **Акцентний колір**\n\nПоточний: \`${seller.theme_color || '#275700'}\`\n\nОберіть колір або надішліть HEX-код:`,
-    { parse_mode: 'Markdown', ...colorPaletteMenu }
+    `🎨 **Акцентний колір**\n\nПоточний: \`${currentColor}\`\n\nОберіть колір або надішліть HEX-код:`,
+    { parse_mode: 'Markdown', ...getColorPaletteMenu(currentColor) }
   );
   userStates[ctx.from.id] = 'awaiting_color_hex';
 });
@@ -176,9 +184,13 @@ bot.action(/^color_(#.+)$/, async (ctx) => {
   delete userStates[ctx.from.id];
   await updateSellerData(ctx.from.id, { theme_color: selectedColor });
   ctx.answerCbQuery('Колір збережено!');
-  ctx.reply(`✅ Акцентний колір змінено на ${selectedColor}`);
-  const menu = await renderShowcaseMenu(ctx);
-  ctx.reply(menu.text, menu.extra);
+
+  // Оновлюємо клавіатуру меню кольорів з галочкою
+  try {
+    await ctx.editMessageReplyMarkup(getColorPaletteMenu(selectedColor).reply_markup);
+  } catch (e) {}
+
+  ctx.reply(`✅ Акцентний колір змінено на \`${selectedColor}\``, { parse_mode: 'Markdown' });
 });
 
 bot.action('back_to_showcase', async (ctx) => {
@@ -192,7 +204,6 @@ bot.on(['text', 'photo'], async (ctx) => {
   const state = userStates[ctx.from.id];
   if (!state) return;
 
-  // Кроки додавання товару
   if (state === 'add_prod_name' && ctx.message.text) {
     tempProductData[ctx.from.id].name = ctx.message.text;
     userStates[ctx.from.id] = 'add_prod_price';
@@ -249,7 +260,6 @@ bot.on(['text', 'photo'], async (ctx) => {
     return ctx.reply(`🎉 **Товар успішно додано!**\n\n📦 **Назва:** ${prod.name}\n💰 **Ціна:** ${prod.price} грн`, { parse_mode: 'Markdown', ...mainReplyMenu });
   }
 
-  // Обробка налаштувань вітрини
   if (state === 'awaiting_store_name' && ctx.message.text) {
     await updateSellerData(ctx.from.id, { store_name: ctx.message.text });
     await ctx.reply(`✅ Назву магазину змінено на: **${ctx.message.text}**`, { parse_mode: 'Markdown' });
